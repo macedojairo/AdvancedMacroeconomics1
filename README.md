@@ -20,6 +20,6 @@ Welcome! This repository contains materials related to the course **Advanced Mac
 
 ```bash
 .
-├── homework/            # Weekly assignments and solutions
+├── Homework/            # Weekly assignments and solutions
 └── README.md            # You are here :)
 
