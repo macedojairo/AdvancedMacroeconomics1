@@ -1,0 +1,198 @@
+---
+title: "Homework 4 - Question 1"
+author: "Jairo Macedo"
+format: html
+editor: visual
+---
+
+# Project Info
+
+**Course:** Advanced Macroeconomics 1 – PIMES/UFPE\
+**Script:** Homework4.1.qmd\
+
+## 0. Configuration
+
+```{r}
+# Load user-specific paths and settings from config file
+source("config.R")  # defines path, packages, etc.
+```
+
+## \# 1. Import & Merge Raw Data ----
+
+```{r}
+## 1.1 Load dataset
+df <- as.data.table(read_excel(file.path(general_path, "Homework", "Homework4", "data_vec_alunos.xls")))
+
+# Log-transforming the relevant variables
+df[, l_consumption := log(Cgasolina)]
+df[, l_income := log(PIB_cap)]
+df[, l_price_gas := log(Pgasolina)]
+df[, l_price_eth := log(Petanol)]
+
+# Drop intermediate variables
+df[, c("Cgasolina", "PIB_cap", "Pgasolina", "Petanol") := NULL]
+
+summary(df)
+```
+
+```{r}
+## Graphs
+
+# List of variables to plot
+vars_to_plot <- c("l_consumption", "l_income", "l_price_gas", "l_price_eth")
+
+# Generate plots using a loop
+for (var in vars_to_plot) {
+  p <- ggplot(df, aes(x = Ano, y = get(var))) +
+    geom_line(color = red_color, size = 1) +  # Apply custom line color
+    labs(title = paste("Log-transformed", var), x = "Date", y = paste("Log(", var, ")", sep = "")) +
+    theme_minimal() +  # Removes gray background
+    theme(
+      panel.grid.major = element_line(color = "gray90"),  # Soft major grid lines
+      panel.grid.minor = element_line(color = "gray95"),  # Softer minor grid lines
+      panel.background = element_rect(fill = "white"),  # White background
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Centered title
+    )
+  
+  print(p)  # Display the plot
+}
+
+
+```
+
+## 2. Question 1: Using the dataset data_vec_alunos.xls, available in the class folder, estimate a Vector Error Correction (VEC) model and calculate the short-term and long-term elasticities of gasoline demand.
+
+### a) Apply the Engle-Granger methodology as discussed in class and compare your results with Alves and Bueno (2003).
+
+```{r}
+# Step 1: Test for unit roots in log-level series (ADF test with trend)
+## Consumption
+summary(ur.df(df$l_consumption, type = "trend", selectlags = "AIC"))
+
+
+df[, l_consumption_1 := c(NA, diff(l_consumption))]
+
+summary(ur.df(na.omit(df$l_consumption_1), type = "drift", selectlags = "AIC"))
+```
+
+The test fails to reject the null hypothesis of a unit root both in levels and in first differences, suggesting the series is not clearly I(1).
+
+```{r}
+# Step 1: Test for unit roots in log-level series (ADF test with trend)
+## Income
+summary(ur.df(df$l_income, type = "trend", selectlags = "AIC"))
+
+
+df[, l_income_1 := c(NA, diff(l_income))]
+
+summary(ur.df(na.omit(df$l_income_1), type = "drift", selectlags = "AIC"))
+
+```
+
+The test fails to reject the null hypothesis of a unit root both in levels and in first differences, suggesting the series is not clearly I(1).
+
+```{r}
+# Step 1: Test for unit roots in log-level series (ADF test with trend)
+## PriceGas
+summary(ur.df(df$l_price_gas, type = "trend", selectlags = "AIC"))
+
+
+df[, l_price_gas_1 := c(NA, diff(l_price_gas))]
+
+summary(ur.df(na.omit(df$l_price_gas_1), type = "drift", selectlags = "AIC"))
+
+```
+
+The test fails to reject the null hypothesis of a unit root both in levels and in first differences, suggesting the series is not clearly I(1).
+
+```{r}
+# Step 1: Test for unit roots in log-level series (ADF test with trend)
+## PriceEtanol
+summary(ur.df(df$l_price_eth, type = "trend", selectlags = "AIC"))
+
+
+df[, l_price_eth_1 := c(NA, diff(l_price_eth))]
+
+summary(ur.df(na.omit(df$l_price_eth_1), type = "drift", selectlags = "AIC"))
+
+```
+
+The test rejects the null hypothesis of a unit root in first differences, while failing to reject in levels. This supports that the series is I(1).
+
+$$
+\log(\text{Consumption})_t = \beta_0 + \beta_1 \cdot t + \beta_2 \cdot t^2 + \beta_3 \cdot \log(\text{GDP})_t + \beta_4 \cdot \log(\text{Gasoline Price})_t + \beta_5 \cdot \log(\text{Ethanol Price})_t + e_t\
+$$
+
+```{r}
+# Step 2: Estimate the long-run relationship using OLS with time trend
+
+df[, t := 1:.N]        # create the time variable
+df[, t2 := t^2]        # create the quadratic trend
+
+long_run_model <- lm(l_consumption ~ t + I(t^2) + l_income + l_price_gas + l_price_eth, data = df)
+summary(long_run_model)
+```
+
+If the residuals from the regression are stationary - I(0), it confirms that the variables are cointegrated
+
+```{r}
+# Extract residuals from long-run equation
+df[, residuals := resid(long_run_model)]
+```
+
+```{r}
+# Step 3: Test for stationarity of residuals (Engle-Granger cointegration test)
+
+summary(ur.df(df$residuals, type = "none", selectlags = "AIC"))
+```
+
+The variables are cointegrated, indicating the existence of a long-run relationship between log(consumption), log(income), log(gasoline price), and log(ethanol price).
+
+```{r}
+# Step 4: Estimate the Error Correction Model (ECM)
+
+# Create a dataset with required variables
+df_ecm <- df[, .(l_consumption_1, l_income_1, l_price_gas_1, l_price_eth_1, residuals)]
+
+# Add time trend BEFORE dropping NAs
+df_ecm[, t := .I]
+
+# Create the lagged error correction term
+df_ecm[, ecm_lag := shift(residuals)]
+
+# Drop NAs after constructing all variables
+df_ecm <- na.omit(df_ecm)
+
+# Estimate the ECM with time trend included
+ecm_model <- lm(l_consumption_1 ~ t + l_income_1 + l_price_gas_1 + l_price_eth_1 + ecm_lag, data = df_ecm)
+summary(ecm_model)
+```
+
+![](images/clipboard-836626966.png)
+
+### b) Repeat the exercise using Johansen method
+
+## 0. Configuration
+
+```{r}
+# Load user-specific paths and settings from config file
+source("config.R")  # defines path, packages, etc.
+```
+
+## \# 1. Import & Merge Raw Data ----
+
+```{r}
+## 1.1 Load dataset
+df <- as.data.table(read_excel(file.path(general_path, "Homework", "Homework4", "data_vec_alunos.xls")))
+
+# Log-transforming the relevant variables
+df[, l_consumption := log(Cgasolina)]
+df[, l_income := log(PIB_cap)]
+df[, l_price_gas := log(Pgasolina)]
+df[, l_price_eth := log(Petanol)]
+
+# Drop intermediate variables
+df[, c("Cgasolina", "PIB_cap", "Pgasolina", "Petanol") := NULL]
+
+summary(df)
+```
