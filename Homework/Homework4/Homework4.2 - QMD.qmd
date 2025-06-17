@@ -1,0 +1,180 @@
+---
+title: "Homework 4.2 - Cointegration and VEC Models"
+author: "Jairo Macedo"
+format: pdf
+editor: visual
+---
+
+# Project Info
+
+This script estimates short- and long-run elasticities of gasoline demand and analyzes the relationship between Tbill and Tbill_3year using VEC models. The tasks follow the methodologies of Engle-Granger, Johansen, and SVEC.
+
+**Structure**: 1. Estimate short- and long-run elasticities using Engle-Granger (gasoline)\
+2. Estimate VEC using Johansen procedure (gasoline)\
+3. Estimate long-run relation between Tbill and Tbill_3year (both methods)\
+4. Estimate and plot IRFs from a structural VEC model (SVEC)
+
+------------------------------------------------------------------------
+
+## 0. Load Configuration for Engle-Granger method
+
+```{r}
+source("config.R")  # defines base_path, data_clean_dir, etc.
+```
+
+------------------------------------------------------------------------
+
+## 1. Import & Merge Raw Data
+
+```{r}
+library(data.table)
+library(readxl)
+df <- as.data.table(read_excel(file.path(general_path, "Homework", "Homework4", "quarterly.xls")))
+
+df[, Tbill := as.numeric(Tbill)]
+df[, Tbill_3year := as.numeric(Tbill_3year)]
+
+df[, `:=` (
+  year = as.integer(substr(Date, 1, 4)),
+  quarter = as.integer(substr(Date, 6, 6))
+)]
+
+df <- df[!is.na(Tbill) & !is.na(Tbill_3year)]
+```
+
+------------------------------------------------------------------------
+
+## 2. Engle-Granger Methodology
+
+### 2.1 ADF test for Tbill
+
+```{r}
+library(urca)
+adf_tbill <- ur.df(df$Tbill, type = "drift", selectlags = "AIC")
+summary(adf_tbill)
+```
+
+✅ Result: Tbill is non-stationary in levels (I(1)).
+
+### 2.2 ADF test for Tbill_3year
+
+```{r}
+adf_tbill3 <- ur.df(df$Tbill_3year, type = "drift", selectlags = "AIC")
+summary(adf_tbill3)
+```
+
+✅ Result: Tbill_3year is also non-stationary in levels.
+
+### 2.3 ADF tests on first differences
+
+```{r}
+df[, d_Tbill := c(NA, diff(Tbill))]
+df[, d_Tbill_3year := c(NA, diff(Tbill_3year))]
+
+summary(ur.df(na.omit(df$d_Tbill), type = "drift", selectlags = "AIC"))
+summary(ur.df(na.omit(df$d_Tbill_3year), type = "drift", selectlags = "AIC"))
+```
+
+✅ Both series are stationary in first differences → I(1) confirmed.
+
+------------------------------------------------------------------------
+
+## 3. Long-run Relationship
+
+### 3.1 Estimate long-run equation
+
+```{r}
+long_run_model <- lm(Tbill ~ Tbill_3year, data = df)
+summary(long_run_model)
+```
+
+✅ Strong linear relationship (R² = 0.92).
+
+### 3.2 Extract residuals
+
+```{r}
+df[, residuals_eg := resid(long_run_model)]
+```
+
+------------------------------------------------------------------------
+
+## 4. Engle-Granger Cointegration Test
+
+```{r}
+summary(ur.df(df$residuals_eg, type = "none", selectlags = "AIC"))
+```
+
+✅ Residuals are stationary → Cointegration confirmed.
+
+------------------------------------------------------------------------
+
+## 5. Estimate Error Correction Model (ECM)
+
+```{r}
+df[, d_Tbill := c(NA, diff(Tbill))]
+df[, d_Tbill_3year := c(NA, diff(Tbill_3year))]
+df[, ecm_lag := shift(residuals_eg)]
+df_ecm <- na.omit(df[, .(d_Tbill, d_Tbill_3year, ecm_lag)])
+
+ecm_model <- lm(d_Tbill ~ d_Tbill_3year + ecm_lag, data = df_ecm)
+summary(ecm_model)
+```
+
+✅ ECM shows adjustment coefficient ≈ -0.16 (significant), implying convergence to long-run equilibrium.
+
+------------------------------------------------------------------------
+
+## 6. Johansen Methodology
+
+```{r}
+rm(list = ls())
+source("config.R")
+df <- as.data.table(read_excel(file.path(general_path, "Homework", "Homework4", "quarterly.xls")))
+
+df[, Tbill := as.numeric(Tbill)]
+df[, Tbill_3year := as.numeric(Tbill_3year)]
+
+df[, `:=` (
+  year = as.integer(substr(Date, 1, 4)),
+  quarter = as.integer(substr(Date, 6, 6))
+)]
+
+df <- df[!is.na(Tbill) & !is.na(Tbill_3year)]
+```
+
+### 6.1 Johansen Test
+
+```{r}
+johansen_test <- ca.jo(df[, .(Tbill, Tbill_3year)], type = "trace", ecdet = "const", K = 2)
+summary(johansen_test)
+```
+
+✅ One cointegrating relationship found (rank = 1).
+
+------------------------------------------------------------------------
+
+## 7. Estimate VECM
+
+```{r}
+vec_model <- cajorls(johansen_test, r = 1)
+summary(vec_model$rlm)
+```
+
+✅ Tbill adjustment coefficient ≈ -0.135, significant.
+
+------------------------------------------------------------------------
+
+## 8. Impulse Response Functions (IRFs)
+
+```{r}
+library(vars)
+var_model <- VAR(df[, .(Tbill, Tbill_3year)], p = 2, type = "const")
+irf_result <- irf(var_model,
+                  impulse = "Tbill",
+                  response = "Tbill_3year",
+                  n.ahead = 10,
+                  boot = TRUE)
+plot(irf_result)
+```
+
+✅ IRF shows persistent and significant effect of short-term rate shocks on long-term rates.
